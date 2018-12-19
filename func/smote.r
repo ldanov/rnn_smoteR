@@ -9,7 +9,7 @@
 ## k - number of nearest neighbours to evaluate on (odd number recommended)
 ## Chawla et al. (2002)
 ## Returns a dataframe with only newly created observations
-## String columns are returned as factors
+## Categorical columns are returned as strings
 ## Lyubomir Danov, 2018
 #################################
 
