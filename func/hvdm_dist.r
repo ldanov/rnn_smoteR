@@ -111,7 +111,7 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
       left_join(sd_f, by="feature_colname") %>%
       mutate(x=original_x/(4*sd)) %>%
       select(-sd, -original_x)
-    rm(sd_f)
+  
   } else {
     temp_name <- toString(sample(x = c(letters, LETTERS), 7, replace = T))
     dist_num <- data_frame(key_id=1:nrow(features), feature_colname=temp_name, x=0)
@@ -132,7 +132,7 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
       select(-N_axc, -N_ax) %>%
       rename(class_col_loop=class_col) %>%
       right_join(feature_cat_enc %>% select(-class_col), by = c("feature_colname", "feature_level"))
-    rm(feature_cat_enc, features_cat_names)
+
   } else {
     temp_name <- toString(sample(x = c(letters, LETTERS), 7, replace = T))
     dist_cat <- data_frame(key_id=1:nrow(features), feature_colname=temp_name, class_col_loop=0, feature_level=0, P_axc=0)

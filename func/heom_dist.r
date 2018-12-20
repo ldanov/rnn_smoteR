@@ -107,7 +107,7 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
       left_join(range_f, by="feature_colname") %>%
       mutate(x=original_x/range) %>%
       select(-range, -original_x)
-    rm(range_f)
+
   } else {
     temp_name <- toString(sample(x = c(letters, LETTERS), 7, replace = T))
     dist_num <- data_frame(key_id=1:nrow(features), feature_colname=temp_name, x=0)
@@ -115,11 +115,10 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
   
 # Preprocess categorical features
   if(length(features_cat_names)>0) {
-    feature_cat_enc <- features %>% 
+    dist_cat <- features %>% 
       select(key_id, one_of(features_cat_names)) %>%
       gather(feature_colname, feature_level, -key_id)
     
-    rm(feature_cat_enc, features_cat_names)
   } else {
     temp_name <- toString(sample(x = c(letters, LETTERS), 7, replace = T))
     dist_cat <- data_frame(key_id=1:nrow(features), feature_colname=temp_name, feature_level=0)
