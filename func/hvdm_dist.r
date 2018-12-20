@@ -70,8 +70,7 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
       mutate(P_azc=(P_axc-P_ayc)^2) %>%
       group_by(key_id_x, key_id_y, feature_colname) %>%
       summarise(ndiff_a=sqrt(sum(P_azc))) %>%
-      ungroup() %>%
-      select(-feature_level_x, -feature_level_y)
+      ungroup() 
 
     df_dist_total_worker <- dist_num_obs %>%
       bind_rows(dist_cat_obs) %>%
