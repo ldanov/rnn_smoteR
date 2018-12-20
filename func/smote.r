@@ -13,7 +13,7 @@
 ## Lyubomir Danov, 2018
 #################################
 
-smote <- function(data_origin, target, target_label, k, multiply_min, use_n_cores, handle_categorical=c("character")) {
+smote <- function(data_origin, target, target_label, k, multiply_min, use_n_cores=1, handle_categorical=c("character"), seed_use=NA) {
   require(dplyr)
   # Currently does not handle any NAs
   if(anyNA(data_origin)) {
@@ -22,8 +22,21 @@ smote <- function(data_origin, target, target_label, k, multiply_min, use_n_core
   if("data.table" %in% class(data_origin)) {
     stop("data_origin cannot be of class data.table. Convert to data.frame and try again.")
   }
-  
-  use_n_cores <- ifelse(missing(use_n_cores), 1, use_n_cores)
+
+  if("class_col" %in% colnames(data) & colname_target!="class_col") {
+    stop("only colname_target can be named class_col")
+  }
+
+  for (k in c("key_id")) {
+    if(k %in% colnames(data)) {
+      stop(paste0("data cannot contain column named ", k))
+    }
+  }
+    
+  if(is.na(seed_use)) {
+      seed_use <- as.integer(Sys.time())
+      warning(paste0("seed_use not set; automatically set to current unix time, ", seed_use))
+  }
   
   if(use_n_cores>1){
     require(parallel)
@@ -32,85 +45,89 @@ smote <- function(data_origin, target, target_label, k, multiply_min, use_n_core
   .smote_cl_fun <- function(X, settings_supplier, lb_df, data_fr) {
     lb_df_local <- lb_df[[X]] 
     list2env(settings_supplier, envir = environment())
-    
-    for (z in 1:nrow(lb_df_local)) {
-      i <- lb_df_local$my_row_id[z]
-      set.seed(i)
-      
-      data_fr_sc <- scale(x=data_fr, 
-                          center = unname(unlist(data_fr[i, ])), 
-                          scale = c(apply(data_fr, 2, max) - apply(data_fr, 2, min)))
-      
-      # Evaluate categorical on match      
-      
-      if (length(categorical)>0) {
-        for (cat in categorical) {
-          data_fr_sc[,cat] <- data_fr_sc[,cat] != 0
-        }
-      }
-      
-      
-      all_NNs <- (drop(data_fr_sc^2 %*% rep(1, ncol(data_fr_sc))))
-      # always calculate # of minority on all neighbours
-      # number of minorities within knn is sum(target_vars[kNNs])
-      kNNs <- order(all_NNs)[2:(k+1)]
-      
-      for (m_n in 1:multiply_min) {
-        neig <- sample(k, 1)
-        
-        diff_n_p <- (data_fr[kNNs[neig],] - data_fr[i,])
-        gap <- runif(ncol(data_fr))
-        
-        tmp_obs <- data.frame(data_fr[i,] + gap * diff_n_p)
-        
-        # if(anyNA(tmp_obs) ) {
-        #   print(paste0("NAs introduced in i=",i,"; m_n=", m_n,"."))
-        # }
-        
-        if(length(categorical)>0){
-          for (cat in categorical)
-            tmp_obs[1, cat] <- c(data_fr[kNNs[neig], cat], data_fr[i, cat])[1+sample(0:1, 1)]
-        }
-        
-        if(!exists("new_obs", envir = environment())) {
-          new_obs <- tmp_obs
+    df_cat_orig <- lb_df_local %>%
+        distinct(key_id) %>%
+        left_join(data_fr, by="key_id") %>%
+        select(key_id, one_of(categorical)) %>%
+        gather(feat_name, feat_value_cat, -key_id)
+
+    df_num_orig <- lb_df_local %>%
+        distinct(key_id) %>%
+        left_join(data_fr, by="key_id") %>%
+        select(-one_of(categorical), -matches("class_col")) %>%
+        gather(feat_name, feat_value_num, -key_id)
+
+    for (mult in 1:multiply_min) {
+        set.seed(mult*seed)
+        lb_df_local_tmp <- lb_df_local %>%
+            group_by(key_id) %>%
+            sample_n(1)
+
+        df_cat_new <- lb_df_local_tmp %>%
+            left_join(data_fr %>% rename(neigh=key_id), by=c("neigh") %>%
+            select(key_id, one_of(categorical)) %>%
+            gather(feat_name, feat_value_cat, -key_id) %>%
+            full_join(df_cat_orig, 
+                by=c("key_id", "feat_name"), 
+                suffix=c("_n", "_o")) %>%
+            mutate(gap=runif(n())) %>%
+            mutate(feat_value_cat_synth=ifelse(gap>0.5, feat_value_cat_n, feat_value_cat_o)) %>%
+            select(key_id, feat_name, feat_value_cat_synth) %>%
+            spread(feat_name, feat_value_cat_synth)
+
+        df_num_new <- lb_df_local_tmp %>%
+            left_join(data_fr %>% rename(neigh=key_id), by=c("neigh") %>%
+            select(-one_of(categorical), -matches("class_col")) %>%
+            gather(feat_name, feat_value_num, -key_id) %>%
+            full_join(df_num_orig, 
+                by=c("key_id", "feat_name"), 
+                suffix=c("_n", "_o")) %>%
+            mutate(gap=runif(n())) %>%
+            mutate(diff=feat_value_num_n - feat_value_num_o) %>%
+            mutate(feat_value_num_synth=feat_value_num_o + (gap*diff))) %>%
+            select(key_id, feat_name, feat_value_cat_synth) %>%
+            spread(feat_name, feat_value_cat_synth)
+
+        df_new_tmp <- df_cat_new %>%
+            full_join(df_num_new, by="key_id")
+
+        if (mult==1) {
+            new_obs <- df_new_tmp
         } else {
-          new_obs <- bind_rows(new_obs, tmp_obs)    
+            new_obs <- bind_rows(new_obs, df_new_tmp)
         }
-      }
+
     }
+
     return(new_obs)    
   }  
 
+  data_origin <- data_origin %>%
+    mutate(key_id=row_number()) %>%
+    rename(class_col = !!sym(colname_target)) %>%
+    select(key_id, class_col, everything()) %>%
+    mutate_if(is.factor, as.character)
   # filter only minority class, remove class label column  
   data_fr <- data_origin[data_origin[,target]==target_label, ]
-  data_fr <- data_fr[,!colnames(data_fr) %in% c(target)]
-  lb_df <- data_fr %>%
-    transmute(my_row_id=row_number()) %>%
-    mutate(local_id=rep_len(c(1:use_n_cores), length.out = n())) %>%
-    split(., .$local_id)
   
-  # Reencode character and factor cols as numeric
-  class_cat_col <- sapply(data_fr, class)
-  categorical_cols <- class_cat_col[class_cat_col %in% c("character", "factor")]
-  
-  categorical_map <- list()
-  if(length(categorical_cols)==0) categorical_cols <- NULL
+  dist_min <- heom_dist(data=data_fr, colname_target="class_col", use_n_cores=use_n_cores) %>%
+    group_by(key_id_x) %>%
+    top_n(n=-k, wt=dist) %>%
+    rename(neigh=key_id_y, key_id=key_id_x) %>%
+    select(key_id, neigh)
 
-  for (cats in names(categorical_cols)) {
-    if (categorical_cols[cats]=="character") {
-        data_fr[,cats] <- as.factor(data_fr[,cats])    
-    }
-    if (categorical_cols[cats]=="factor") { 
-      categorical_map[[cats]] <- data.frame(fac_val=unique(data_origin[,cats])) %>%
-                     mutate(num_val=as.numeric(fac_val),
-                            chr_val=as.character(fac_val))
-      data_fr[,cats] <- as.numeric(data_fr[,cats])
-    }
-  }
+  lb_df <- dist_min %>%
+    select(key_id) %>%
+    mutate(local_id=rep_len(c(1:use_n_cores), length.out = n())) %>%
+    left_join(dist_min, by="key_id") %>%
+    split(., .$local_id)
+
+  categorical_cols <- sapply(data_fr, class)
+  categorical_cols <- categorical_cols[categorical_cols=="character" & 
+                        (!names(categorical_cols) %in% c("class_col", "key_id"))]
   
   settings_supplier <- list(multiply_min=multiply_min,
-                            k=k,
+                            seed=seed_use,
                             categorical=names(categorical_cols))
   
   if(use_n_cores>1){
@@ -118,6 +135,7 @@ smote <- function(data_origin, target, target_label, k, multiply_min, use_n_core
     smote_cl <- parallel::makeCluster(use_n_cores)
     parallel::clusterExport(cl = smote_cl, envir = environment(), varlist = c("settings_supplier", "lb_df", "data_fr"))
     parallel::clusterCall(cl = smote_cl, function() library(dplyr))
+    parallel::clusterCall(cl = smote_cl, function() library(tidyr))
     on.exit(stopCluster(smote_cl))
     
     list_new_obs <- parLapplyLB(cl = smote_cl,
