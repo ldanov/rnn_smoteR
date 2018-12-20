@@ -1,9 +1,11 @@
 #################################
-####### hvdm ###################
-## data - data frame containing class column, features and a unique key key_id. Missing values not yet supported
+####### hvdm_dist ###############
+## Heterogeneous Value Difference Metric
+## Wilson & Martinez (1997): Improved Heterogeneous Distance Functions, pp.8-9
+## data - data frame containing class column, features and a unique key key_id. 
+## Missing values not yet supported
 ## colname_target - string with column name of class labels
 ## use_n_cores - should synth obs generation be parallelized; on how many cores (DEFAULT:1)
-## Wilson & Martinez (1997): Improved Heterogeneous Distance Functions
 ## Returns a dataframe with key_id_x, key_id_y, class_col_x, class_col_y, dist (distance) 
 ## for each combination of x and y from key_id
 ## Lyubomir Danov, 2018
