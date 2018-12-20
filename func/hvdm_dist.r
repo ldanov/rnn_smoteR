@@ -61,7 +61,9 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
       
       dist_cat_obs <- df_dist_cat %>% 
         filter(key_id==obs_n) %>%
-        left_join(df_dist_cat %>% rename(P_ayc=P_axc), by=c("feature_colname", "class_col_loop"), suffix=c("_x", "_y")) %>%
+        full_join(df_dist_cat %>% rename(P_ayc=P_axc), by=c("feature_colname", "class_col_loop"), suffix=c("_x", "_y")) %>%
+        mutate(P_axc=ifelse(is.na(P_axc), 0, P_axc)) %>%
+        mutate(P_ayc=ifelse(is.na(P_ayc), 0, P_ayc)) %>%
         mutate(P_azc=(P_axc-P_ayc)^2) %>%
         group_by(key_id_x, key_id_y, feature_colname, feature_level_x, feature_level_y) %>%
         summarise(ndiff_a=sqrt(sum(P_azc))) %>%
