@@ -172,7 +172,8 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
     bind_rows(.) %>% 
     left_join(data %>% transmute(key_id_x=key_id, class_col_x=!!sym(colname_target)), by="key_id_x") %>%
     left_join(data %>% transmute(key_id_y=key_id, class_col_y=!!sym(colname_target)), by="key_id_y") %>%
-    as.data.frame(.) 
+    arrange(key_id_x, key_id_y) %>%
+    as.data.frame(., row_names=NULL) 
   
   return(dist_total_all)
 }
