@@ -49,42 +49,35 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
   }
   
   .hvdm_cl_dist_matrix <- function(df_dist_num, df_dist_cat, list_load_balance, X) {
-    load_balance_local <- load_balance[[X]] 
-    for (obs_n in load_balance_local$key_id){
-      
-      dist_num_obs <- df_dist_num %>% 
-        filter(key_id==obs_n) %>%
-        rename(key_id_x=key_id) %>%
-        left_join(df_dist_num %>% 
-                    rename(y=x, key_id_y=key_id), by="feature_colname") %>% 
-        mutate(ndiff_a=abs(x-y)) %>% 
-        select(key_id_x, key_id_y, feature_colname, ndiff_a) 
-      
-      dist_cat_obs <- df_dist_cat %>% 
-        filter(key_id==obs_n) %>%
-        # if any of the features (a) has different class occurances (c), then expand to all observed classes
-        # P_axc = (N_axc / N_ax) = (0 / N_ax) = 0
-        full_join(df_dist_cat %>% rename(P_ayc=P_axc), by=c("feature_colname", "class_col_loop"), suffix=c("_x", "_y")) %>%
-        mutate(P_axc=ifelse(is.na(P_axc), 0, P_axc)) %>%
-        mutate(P_ayc=ifelse(is.na(P_ayc), 0, P_ayc)) %>%
-        mutate(P_azc=(P_axc-P_ayc)^2) %>%
-        group_by(key_id_x, key_id_y, feature_colname) %>%
-        summarise(ndiff_a=sqrt(sum(P_azc))) %>%
-        ungroup() %>%
-        select(-feature_level_x, -feature_level_y)
-      
-      df_dist_total_obs <- dist_num_obs %>%
-        bind_rows(dist_cat_obs) %>%
-        group_by(key_id_x, key_id_y) %>%
-        summarise(dist=sqrt(sum(ndiff_a^2)))
-      
-      if(obs_n==load_balance_local$key_id[1]) {
-        df_dist_total_worker <- df_dist_total_obs
-      } else {
-        df_dist_total_worker <- df_dist_total_worker %>% 
-          bind_rows(df_dist_total_obs)
-      }
-    }
+    load_balance_local <- load_balance[[X]] %>%
+      select(key_id)
+
+    dist_num_obs <- df_dist_num %>% 
+      right_join(load_balance_local, by="key_id") %>%
+      rename(key_id_x=key_id) %>%
+      left_join(df_dist_num %>% 
+                  rename(y=x, key_id_y=key_id), by="feature_colname") %>% 
+      mutate(ndiff_a=abs(x-y)) %>% 
+      select(key_id_x, key_id_y, feature_colname, ndiff_a) 
+
+    dist_cat_obs <- df_dist_cat %>% 
+      right_join(load_balance_local, by="key_id") %>%
+      # if any of the features (a) has different class occurances (c), then expand to all observed classes
+      # P_axc = (N_axc / N_ax) = (0 / N_ax) = 0
+      full_join(df_dist_cat %>% rename(P_ayc=P_axc), by=c("feature_colname", "class_col_loop"), suffix=c("_x", "_y")) %>%
+      mutate(P_axc=ifelse(is.na(P_axc), 0, P_axc)) %>%
+      mutate(P_ayc=ifelse(is.na(P_ayc), 0, P_ayc)) %>%
+      mutate(P_azc=(P_axc-P_ayc)^2) %>%
+      group_by(key_id_x, key_id_y, feature_colname) %>%
+      summarise(ndiff_a=sqrt(sum(P_azc))) %>%
+      ungroup() %>%
+      select(-feature_level_x, -feature_level_y)
+
+    df_dist_total_worker <- dist_num_obs %>%
+      bind_rows(dist_cat_obs) %>%
+      group_by(key_id_x, key_id_y) %>%
+      summarise(dist=sqrt(sum(ndiff_a^2)))
+
     return(df_dist_total_worker)
   }
   
