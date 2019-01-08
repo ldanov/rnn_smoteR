@@ -12,10 +12,10 @@
 ## Lyubomir Danov, 2018
 #################################
 
-rnn_smote1 <- function(data, colname_target, minority_label, 
+rnn_smote_v1 <- function(data, colname_target, minority_label, 
                   knn, multiply_min, use_n_cores=1, 
                   handle_categorical=c("character"), 
-                  seed_use=NA) {
+                  seed_use=NA, conservative=FALSE, b_shape1=1, b_shape2=3) {
   require(dplyr)
   # Currently does not handle any NAs
   if(anyNA(data)) {
@@ -43,24 +43,93 @@ rnn_smote1 <- function(data, colname_target, minority_label,
   if(use_n_cores>1){
     require(parallel)
   }
+
+.find_closest_nonmin_vals <- function(data_fr, lb_df_local, minority_label, numerical) {
+    require(dplyr)
+    require(tidyr)
+
+    distinct_keys <- c( lb_df_local %>%
+                            distinct(key_id) %>% 
+                            pull(key_id), 
+                        data_fr %>% 
+                            filter(class_col!=minority_label) %>% 
+                            pull(key_id) 
+                    )
+
+    df_num_all <- data_fr %>%
+        select(key_id, class_col, one_of(numerical)) %>%
+        filter(key_id %in% distinct_keys)
+
+    for (k in seq_along(numerical)) {
+        
+        df_num_tmp <- df_num_all %>%
+            select(key_id, class_col, one_of(numerical[k])) %>%
+            gather(feat_name, feat_value_num, -key_id, -class_col)
+
+        breaks_tmp <- c(-Inf, 
+            df_num_tmp %>%
+                filter(class_col==minority_label) %>%
+                distinct(feat_value_num) %>%
+                arrange(feat_value_num) %>%
+                pull(feat_value_num),
+            Inf)
+
+        df_num_tmp <- df_num_tmp %>%
+            mutate(feat_val_grps_left=cut(feat_value_num, breaks=breaks_tmp, include.lowest=FALSE, right=TRUE)) %>%
+            mutate(feat_val_grps_right=cut(feat_value_num, breaks=breaks_tmp, include.lowest=FALSE, right=FALSE))
+
+        df_num_new <- df_num_tmp %>%
+            filter(class_col==minority_label) %>%
+            left_join(df_num_tmp %>% 
+                        filter(class_col!=minority_label) %>% 
+                        select(feat_val_grps_left, feat_value_num), 
+                      by="feat_val_grps_left", 
+                      suffix=c("", "_maj_left")
+                      ) %>%
+            group_by(key_id) %>%
+            filter(feat_value_num_maj_left==max(feat_value_num_maj_left)) %>%
+            ungroup() %>%
+            distinct(feat_value_num_maj_left, .keep_all=TRUE) %>%
+            left_join(df_num_tmp %>% 
+                        filter(class_col!=minority_label) %>% 
+                        select(feat_val_grps_right, feat_value_num), 
+                      by="feat_val_grps_right", 
+                      suffix=c("", "_maj_right")
+                      ) %>%
+            group_by(key_id) %>%
+            filter(feat_value_num_maj_right==min(feat_value_num_maj_right)) %>%
+            ungroup() %>%
+            distinct(feat_value_num_maj_right, .keep_all=TRUE) %>%
+            select(-starts_with("feat_val_grps")) %>%
+            as.data.frame(.)
+            
+        if(k==1) {
+            df_num_orig <- df_num_new
+        } else {
+            df_num_orig <- bind_rows(df_num_orig, df_num_new)
+        }
+    }
+
+    return(df_num_orig)
+}
   
-  .smote_cl_fun <- function(X, settings_supplier, lb_df, data_fr) {
+  .rnn_smote_cl_fun <- function(X, settings_supplier, lb_df, data_fr) {
     lb_df_local <- lb_df[[X]] 
     list2env(settings_supplier, envir = environment())
+    
     df_cat_orig <- lb_df_local %>%
         distinct(key_id) %>%
         left_join(data_fr, by="key_id") %>%
         select(key_id, one_of(categorical)) %>%
         gather(feat_name, feat_value_cat, -key_id)
 
-    df_num_orig <- lb_df_local %>%
-        distinct(key_id) %>%
-        left_join(data_fr, by="key_id") %>%
-        select(key_id, one_of(numerical)) %>%
-        gather(feat_name, feat_value_num, -key_id)
+    df_num_orig <- .find_closest_nonmin_vals(data_fr=data_fr, 
+              lb_df_local=lb_df_local, 
+              minority_label=minority_label,
+              numerical=numerical)
 
     for (mult in seq_len(multiply_min)) {
-        set.seed(mult*seed)
+        set.seed(as.integer(mult+seed))
         lb_df_local_tmp <- lb_df_local %>%
             group_by(key_id) %>%
             sample_n(1) %>%
@@ -85,8 +154,22 @@ rnn_smote1 <- function(data, colname_target, minority_label,
             full_join(df_num_orig, 
                 by=c("key_id", "feat_name"), 
                 suffix=c("_n", "_o")) %>%
-            mutate(gap=runif(n())) %>%
-            mutate(diff=feat_value_num_n - feat_value_num_o) %>%
+            group_by(key_id, feat_name) %>%
+            mutate(closest_value=case_when(feat_value_num_o > feat_value_num_n & feat_value_num_maj_left > feat_value_num_n ~ "maj_l" ,
+                                           feat_value_num_o < feat_value_num_n & feat_value_num_maj_right < feat_value_num_n ~ "maj_r",
+                                           TRUE ~ "neigh"
+                                          )) %>%
+            ungroup() %>%
+            mutate(feat_value_use = case_when(closest_value=="maj_l" ~ feat_value_num_maj_left,
+                                              closest_value=="maj_r" ~ feat_value_num_maj_right,
+                                              TRUE ~ feat_value_num_n)) %>%
+            mutate(gap_r=rbeta(n=n(), shape1=b_shape1, shape2=b_shape2)) %>%
+            mutate(gap_l=1-gap_r) %>%
+            mutate(gap_n=runif(n())) %>%
+            mutate(gap=case_when(closest_value=="maj_l" & conservative==TRUE ~ gap_l,
+                                 closest_value=="maj_r" & conservative==TRUE ~ gap_r,
+                                 TRUE ~ gap_n)) %>%
+            mutate(diff=feat_value_use - feat_value_num_o) %>%
             mutate(feat_value_num_synth=feat_value_num_o + (gap*diff)) %>%
             select(key_id, feat_name, feat_value_num_synth) %>%
             spread(feat_name, feat_value_num_synth)
@@ -134,19 +217,24 @@ rnn_smote1 <- function(data, colname_target, minority_label,
   settings_supplier <- list(multiply_min=multiply_min,
                             seed=seed_use,
                             categorical=names(categorical_cols),
-                            numerical=names(numerical_cols))
+                            numerical=names(numerical_cols),
+                            minority_label=minority_label,
+                            conservative=conservative, 
+                            b_shape1=b_shape1, 
+                            b_shape2=b_shape2)
   
   if(use_n_cores>1){
     
     smote_cl <- parallel::makeCluster(use_n_cores)
-    parallel::clusterExport(cl = smote_cl, envir = environment(), varlist = c("settings_supplier", "lb_df", "data_fr"))
+    parallel::clusterExport(cl = smote_cl, envir = environment(), 
+        varlist = c("settings_supplier", "lb_df", "data_fr", ".find_closest_nonmin_vals"))
     parallel::clusterCall(cl = smote_cl, function() library(dplyr))
     parallel::clusterCall(cl = smote_cl, function() library(tidyr))
     on.exit(stopCluster(smote_cl))
     
     list_new_obs <- parLapplyLB(cl = smote_cl,
                                 X = 1:use_n_cores,
-                                fun = .smote_cl_fun,
+                                fun = .rnn_smote_cl_fun,
                                 settings_supplier=settings_supplier,
                                 lb_df = lb_df,
                                 data_fr=data_fr)
@@ -155,7 +243,7 @@ rnn_smote1 <- function(data, colname_target, minority_label,
   } else {
     
     list_new_obs <- lapply(X = 1:use_n_cores,
-                           FUN = .smote_cl_fun,
+                           FUN = .rnn_smote_cl_fun,
                            settings_supplier=settings_supplier,
                            lb_df = lb_df,
                            data_fr=data_fr)
