@@ -1,14 +1,16 @@
 # given a df with feat_name, feat_value_num, key_id
 # return
 
-.find_closest_nonmin_vals <- function(data_fr, lb_df_local, minority_label, numerical) {
+.fcnmv <- function(data_fr, lb_df_local, minority_label, numerical) {
     require(dplyr)
     require(tidyr)
 
     distinct_keys <- c( lb_df_local %>%
+                            ungroup() %>%
                             distinct(key_id) %>% 
                             pull(key_id), 
                         data_fr %>% 
+                            ungroup() %>%
                             filter(class_col!=minority_label) %>% 
                             pull(key_id) 
                     )
@@ -40,23 +42,25 @@
             left_join(df_num_tmp %>% 
                         filter(class_col!=minority_label) %>% 
                         select(feat_val_grps_left, feat_value_num), 
-                      by="feat_val_grps_left", 
-                      suffix=c("", "_maj_left")
-                      ) %>%
+                    by="feat_val_grps_left", 
+                    suffix=c("", "_maj_left")
+                    ) %>%
+            mutate(feat_value_num_maj_left=ifelse(is.na(feat_value_num_maj_left), -Inf, feat_value_num_maj_left)) %>%
             group_by(key_id) %>%
             filter(feat_value_num_maj_left==max(feat_value_num_maj_left)) %>%
             ungroup() %>%
-            distinct(feat_value_num_maj_left, .keep_all=TRUE) %>%
+            distinct(key_id, .keep_all=TRUE) %>%
             left_join(df_num_tmp %>% 
                         filter(class_col!=minority_label) %>% 
                         select(feat_val_grps_right, feat_value_num), 
-                      by="feat_val_grps_right", 
-                      suffix=c("", "_maj_right")
-                      ) %>%
+                    by="feat_val_grps_right", 
+                    suffix=c("", "_maj_right")
+                    ) %>%
+            mutate(feat_value_num_maj_right=ifelse(is.na(feat_value_num_maj_right), Inf, feat_value_num_maj_right)) %>%
             group_by(key_id) %>%
             filter(feat_value_num_maj_right==min(feat_value_num_maj_right)) %>%
             ungroup() %>%
-            distinct(feat_value_num_maj_right, .keep_all=TRUE) %>%
+            distinct(key_id, .keep_all=TRUE) %>%
             select(-starts_with("feat_val_grps")) %>%
             as.data.frame(.)
             
