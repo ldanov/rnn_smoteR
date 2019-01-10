@@ -1,14 +1,14 @@
 #################################
 ####### rare Nearest Neighbour SMOTE 1 ###################
-## data_origin - data frame containing only target and features and wihout NAs
-## target - string of target column name
-## target_label - which label is the minority for which synth obs are generated
+## data - data frame containing only target and features and wihout NAs
+## colname_target - string of target column name
+## minority_label - which label is the minority for which synth obs are generated
 ## multiply_min - how many synthetic observations to generate for each existing minority obs
 ## use_n_cores - should synth obs generation be parallelized; on how many cores (DEFAULT:1)
 ## handle_categorical - how should factor or character columns be returned. Currently only returns character columns.
 ## k - number of nearest neighbours to evaluate on (odd number recommended)
 ## Returns a dataframe with only newly created observations
-## String columns are returned as factors
+## Categorical columns are returned as strings
 ## Lyubomir Danov, 2018
 #################################
 
@@ -54,12 +54,12 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
                              colname_target="class_col", 
                              use_n_cores=use_n_cores, 
                              n_batches=use_n_cores, 
-                             dist_type=c("hvdm")) %>%
-  dplyr::filter(key_id_x!=key_id_y) %>%
-  group_by(key_id_x) %>%
-  top_n(n=-knn, wt=dist) %>%
-  rename(neigh=key_id_y, key_id=key_id_x) %>%
-  select(key_id, neigh)
+                             dist_type="hvdm") %>%
+    dplyr::filter(key_id_x!=key_id_y) %>%
+    group_by(key_id_x) %>%
+    top_n(n=-knn, wt=dist) %>%
+    rename(neigh=key_id_y, key_id=key_id_x) %>%
+    select(key_id, neigh)
 
   lb_df <- dist_min %>%
     select(key_id) %>%
@@ -97,7 +97,6 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
                                 settings_supplier=settings_supplier,
                                 lb_df = lb_df,
                                 data_fr=data_fr)
-    
     
   } else {
     

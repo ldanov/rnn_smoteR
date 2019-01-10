@@ -49,14 +49,13 @@ smote <- function(data, colname_target, minority_label,
     mutate(key_id=row_number()) %>%
     rename(class_col = !!sym(colname_target)) %>%
     select(key_id, class_col, everything()) %>%
-    mutate_if(is.factor, as.character) %>%
-    dplyr::filter(class_col==minority_label)
+    mutate_if(is.factor, as.character)
   
   dist_min <- comp_dist_metric(dplyr::filter(data_fr, class_col==minority_label), 
                              colname_target="class_col", 
                              use_n_cores=use_n_cores, 
                              n_batches=use_n_cores, 
-                             dist_type="hvdm") %>%
+                             dist_type="heom") %>%
     dplyr::filter(key_id_x!=key_id_y) %>%
     group_by(key_id_x) %>%
     top_n(n=-knn, wt=dist) %>%
@@ -83,7 +82,8 @@ smote <- function(data, colname_target, minority_label,
   if(use_n_cores>1){
     
     smote_cl <- parallel::makeCluster(use_n_cores)
-    parallel::clusterExport(cl = smote_cl, envir = environment(), varlist = c("settings_supplier", "lb_df", "data_fr"))
+    parallel::clusterExport(cl = smote_cl, envir = environment(), 
+        varlist = c("settings_supplier", "lb_df", "data_fr"))
     parallel::clusterCall(cl = smote_cl, function() library(dplyr))
     parallel::clusterCall(cl = smote_cl, function() library(tidyr))
     on.exit(stopCluster(smote_cl))
@@ -94,7 +94,6 @@ smote <- function(data, colname_target, minority_label,
                                 settings_supplier=settings_supplier,
                                 lb_df = lb_df,
                                 data_fr=data_fr)
-    
     
   } else {
     
@@ -119,6 +118,7 @@ smote <- function(data, colname_target, minority_label,
 .smote_cl_fun <- function(X, settings_supplier, lb_df, data_fr) {
   lb_df_local <- lb_df[[X]] 
   list2env(settings_supplier, envir = environment())
+  
   df_cat_orig <- lb_df_local %>%
     distinct(key_id) %>%
     left_join(data_fr, by="key_id") %>%
