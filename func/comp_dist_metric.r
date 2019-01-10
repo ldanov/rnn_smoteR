@@ -1,5 +1,5 @@
 #################################
-## gen_dist_metric: generate distance metric 
+## comp_dist_metric: compute distance metric 
 ## Supports Heterogeneous Euclidean-Overlap Metric (heom) and 
 ## Heterogeneous Value Difference Metric (hvdm); see
 ## Wilson & Martinez (1997): Improved Heterogeneous Distance Functions, 
@@ -16,7 +16,7 @@
 ## Lyubomir Danov, 2019
 #################################
 
-gen_dist_metric <- function(data, colname_target, use_n_cores=1, n_batches=NULL, dist_type=c("hvdm", "heom")) {
+comp_dist_metric <- function(data, colname_target, use_n_cores=1, n_batches=NULL, dist_type=c("hvdm", "heom")) {
   require(dplyr)
   require(tidyr)
   require(tidyselect)
