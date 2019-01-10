@@ -13,8 +13,7 @@
 #################################
 
 ### TODO: Categorical per observation distance sum
-#### tryCatch to close clusters on error if use_n_cores>1
-hvdm_dist <- function(data, colname_target, use_n_cores=1) {
+hvdm_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
   require(dplyr)
   require(tidyr)
   require(tidyselect)
@@ -22,13 +21,14 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
   if(missing(data)) {
     stop("data arg not specified")
   }
-  if (missing(colname_target)) {
-    stop("target column arg not specified")
-  } else if (!is.character(colname_target) | length(colname_target)!=1) {
-    stop("target column arg must be a single string") 
-  }
 
-  if("class_col" %in% colnames(data) & colname_target!="class_col") {
+  if (missing(colname_target)) {
+    stop("colname_target arg not specified")
+  } else if (!is.character(colname_target) | length(colname_target)!=1) {
+    stop("colname_target arg must be a single string") 
+  } else if (!colname_target %in% colnames(data)) {
+    stop("colname_target arg must be the name of a column in data") 
+  } else if("class_col" %in% colnames(data) & colname_target!="class_col") {
     stop("only colname_target can be named class_col")
   }
 
@@ -46,6 +46,13 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
 
   if(use_n_cores>1){
     require(parallel)
+  }
+
+  if(is.null(batch_size)) {
+      batch_size <- use_n_cores
+  } else if(batch_size<use_n_cores) {
+    warning("batch_size smaller than assigned cores; batch_size overwritten to number of cores")
+      batch_size <- use_n_cores
   }
   
   .hvdm_cl_dist_matrix <- function(df_dist_num, df_dist_cat, list_load_balance, X) {
@@ -79,9 +86,7 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
 
     return(df_dist_total_worker)
   }
-  
-
-  
+ 
   features <- as_data_frame(data) %>%
     rename(class_col = !!sym(colname_target)) %>%
     select(key_id, class_col, everything()) %>%
@@ -89,7 +94,7 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
   
   data <- data %>%
     select(one_of(c("key_id", colname_target))) %>%
-    mutate(key_id_x=key_id, key_id_y=key_id)
+    rename(class_col = !!sym(colname_target))
   
   # Feature preprocessing
   
@@ -104,13 +109,16 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
 
 # Preprocess numeric features  
   if(length(features_num_names)>0) {
-    sd_f <- apply(features[,features_num_names], 2, sd) %>% data_frame(feature_colname=names(.), sd=.)
+    range_f <- apply(features[,features_num_names], 2, sd) %>% 
+            data_frame(feature_colname=names(.), sd=.) %>%
+            mutate(range_n=4*sd) %>%
+            select(-sd)
     dist_num <- features %>%
       select(key_id, one_of(features_num_names)) %>% 
       gather(feature_colname, original_x, -key_id) %>%
-      left_join(sd_f, by="feature_colname") %>%
-      mutate(x=original_x/(4*sd)) %>%
-      select(-sd, -original_x)
+      left_join(range_f, by="feature_colname") %>%
+      mutate(x=original_x/range_n) %>%
+      select(-range_n, -original_x)
   
   } else {
     temp_name <- toString(sample(x = c(letters, LETTERS), 7, replace = T))
@@ -140,27 +148,26 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
   
   load_balance <- features %>%
     select(key_id) %>%
-    mutate(local_id=rep_len(c(1:use_n_cores), length.out = n())) %>%
+    mutate(local_id=rep_len(c(1:batch_size), length.out = n())) %>%
     split(., .$local_id)
   
   if(use_n_cores>1){
     
-    hvdm_cl <- parallel::makeCluster(use_n_cores)
-    parallel::clusterExport(cl=hvdm_cl, envir = environment(), varlist = c("dist_num", "dist_cat", "load_balance"))
-    parallel::clusterCall(cl = hvdm_cl, function() library(dplyr))
+    dist_cl <- parallel::makeCluster(use_n_cores)
+    parallel::clusterExport(cl=dist_cl, envir = environment(), varlist = c("dist_num", "dist_cat", "load_balance"))
+    parallel::clusterCall(cl = dist_cl, function() library(dplyr))
+    on.exit(stopCluster(dist_cl))
     
-    list_dist_total_obs <- parLapplyLB(cl = hvdm_cl, 
-                                       X = 1:use_n_cores, 
+    list_dist_total_obs <- parLapplyLB(cl = dist_cl, 
+                                       X = 1:batch_size, 
                                        fun = .hvdm_cl_dist_matrix, 
                                        df_dist_num=dist_num, 
                                        df_dist_cat=dist_cat,
                                        list_load_balance=load_balance)
-    
-    stopCluster(hvdm_cl)
-   
+ 
   } else {
     
-    list_dist_total_obs <- lapply(X = 1:use_n_cores,  
+    list_dist_total_obs <- lapply(X = 1:batch_size,  
                                   FUN = .hvdm_cl_dist_matrix, 
                                   df_dist_num=dist_num, 
                                   df_dist_cat=dist_cat,
@@ -170,8 +177,8 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
   
   dist_total_all <- list_dist_total_obs %>%
     bind_rows(.) %>% 
-    left_join(data %>% transmute(key_id_x=key_id, class_col_x=!!sym(colname_target)), by="key_id_x") %>%
-    left_join(data %>% transmute(key_id_y=key_id, class_col_y=!!sym(colname_target)), by="key_id_y") %>%
+    left_join(data %>% rename(key_id_x=key_id, class_col_x=class_col), by="key_id_x") %>%
+    left_join(data %>% rename(key_id_y=key_id, class_col_y=class_col), by="key_id_y") %>%
     arrange(key_id_x, key_id_y) %>%
     as.data.frame(., row_names=NULL) 
   
