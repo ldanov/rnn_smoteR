@@ -13,7 +13,7 @@
 #################################
 
 rnn_smote_v1 <- function(data, colname_target, minority_label, 
-                  knn, multiply_min, use_n_cores=1, 
+                  knn=3, multiply_min=1, use_n_cores=1, 
                   handle_categorical=c("character"), 
                   seed_use=NA, conservative=FALSE, b_shape1=1, b_shape2=3) {
   require(dplyr)
@@ -172,9 +172,11 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
                 mutate(gap_n=runif(n())) %>%
                 mutate(gap=case_when(closest_value=="maj_l" & conservative==TRUE ~ gap_l,
                                     closest_value=="maj_r" & conservative==TRUE ~ gap_r,
-                                    TRUE ~ gap_n)) %>%
+                                    TRUE ~ gap_n)) 
+                                    
+                df_num_new <- df_num_new %>%
                 mutate(diff=feat_value_use - feat_value_num_o) %>%
-                mutate(feat_value_num_synth=feat_value_num_o + (gap*diff)) %>%
+                mutate(feat_value_num_synth = feat_value_num_o + (gap*diff)) %>%
                 select(key_id, feat_name, feat_value_num_synth) %>%
                 spread(feat_name, feat_value_num_synth)
 
@@ -188,7 +190,6 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
             }
 
     }
-
     return(new_obs)    
   }  
 
@@ -256,7 +257,7 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
   
   df_new <- list_new_obs %>% 
     bind_rows(.) %>%
-    mutate(!!sym(colname_target):=minority_label)  %>%
+    mutate(!!sym(colname_target):=minority_label) %>%
     as.data.frame(., row_names=NULL) 
 
   return(df_new)
