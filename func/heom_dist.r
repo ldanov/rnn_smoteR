@@ -75,7 +75,8 @@ heom_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
     df_dist_total_worker <- dist_num_obs %>%
       bind_rows(dist_cat_obs) %>%
       group_by(key_id_x, key_id_y) %>%
-      summarise(dist=sqrt(sum(ndiff_a^2)))
+      summarise(dist=sqrt(sum(ndiff_a^2))) %>%
+      ungroup() 
 
     return(df_dist_total_worker)
   }

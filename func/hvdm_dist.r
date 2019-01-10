@@ -82,7 +82,8 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
     df_dist_total_worker <- dist_num_obs %>%
       bind_rows(dist_cat_obs) %>%
       group_by(key_id_x, key_id_y) %>%
-      summarise(dist=sqrt(sum(ndiff_a^2)))
+      summarise(dist=sqrt(sum(ndiff_a^2))) %>%
+      ungroup() 
 
     return(df_dist_total_worker)
   }
@@ -139,7 +140,8 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
       mutate(P_axc=N_axc/N_ax) %>%
       select(-N_axc, -N_ax) %>%
       rename(class_col_loop=class_col) %>%
-      right_join(feature_cat_enc %>% select(-class_col), by = c("feature_colname", "feature_level"))
+      right_join(feature_cat_enc %>% select(-class_col), by = c("feature_colname", "feature_level")) %>%
+      ungroup() 
 
   } else {
     temp_name <- toString(sample(x = c(letters, LETTERS), 7, replace = T))
