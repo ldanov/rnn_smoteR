@@ -6,14 +6,14 @@
 ## Missing values not yet supported
 ## colname_target - string with column name of class labels
 ## use_n_cores - should synth obs generation be parallelized; on how many cores (DEFAULT:1)
+## n_batches - in how many batches to split the observations (DEFAULT:1)
 ## Returns a dataframe with key_id_x, key_id_y, class_col_x, class_col_y, dist (distance) 
 ## for each combination of x and y from key_id
 ## Lyubomir Danov, 2018
 #################################
 
 ### TODO: consider integration with hvdm into single function
-#### tryCatch to close clusters on error if use_n_cores>1
-heom_dist <- function(data, colname_target, use_n_cores=1) {
+heom_dist <- function(data, colname_target, use_n_cores=1, n_batches=NULL) {
   require(dplyr)
   require(tidyr)
   require(tidyselect)
@@ -21,13 +21,14 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
   if(missing(data)) {
     stop("data arg not specified")
   }
-  if (missing(colname_target)) {
-    stop("target column arg not specified")
-  } else if (!is.character(colname_target) | length(colname_target)!=1) {
-    stop("target column arg must be a single string") 
-  }
 
-  if("class_col" %in% colnames(data) & colname_target!="class_col") {
+  if (missing(colname_target)) {
+    stop("colname_target arg not specified")
+  } else if (!is.character(colname_target) | length(colname_target)!=1) {
+    stop("colname_target arg must be a single string") 
+  } else if (!colname_target %in% colnames(data)) {
+    stop("colname_target arg must be the name of a column in data") 
+  } else if("class_col" %in% colnames(data) & colname_target!="class_col") {
     stop("only colname_target can be named class_col")
   }
 
@@ -46,9 +47,16 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
   if(use_n_cores>1){
     require(parallel)
   }
+
+  if(is.null(n_batches)) {
+      n_batches <- use_n_cores
+  } else if(n_batches<use_n_cores) {
+    warning("n_batches smaller than assigned cores; n_batches overwritten to number of cores")
+      n_batches <- use_n_cores
+  }
   
   .heom_cl_dist_matrix <- function(df_dist_num, df_dist_cat, list_load_balance, X) {
-    load_balance_local <- load_balance[[X]] %>%
+    load_balance_local <- list_load_balance[[X]] %>%
       select(key_id)
 
     dist_num_obs <- df_dist_num %>% 
@@ -61,8 +69,6 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
 
     dist_cat_obs <- df_dist_cat %>% 
       right_join(load_balance_local, by="key_id") %>%
-      # if any of the features (a) has different class occurances (c), then expand to all observed classes
-      # P_axc = (N_axc / N_ax) = (0 / N_ax) = 0
       full_join(df_dist_cat, by=c("feature_colname"), suffix=c("_x", "_y")) %>%
       mutate(ndiff_a=ifelse(feature_level_x==feature_level_y, 0, 1)) %>%
       select(key_id_x, key_id_y, feature_colname, ndiff_a)
@@ -70,13 +76,12 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
     df_dist_total_worker <- dist_num_obs %>%
       bind_rows(dist_cat_obs) %>%
       group_by(key_id_x, key_id_y) %>%
-      summarise(dist=sqrt(sum(ndiff_a^2)))
+      summarise(dist=sqrt(sum(ndiff_a^2))) %>%
+      ungroup() 
 
     return(df_dist_total_worker)
   }
-  
-
-  
+ 
   features <- as_data_frame(data) %>%
     rename(class_col = !!sym(colname_target)) %>%
     select(key_id, class_col, everything()) %>%
@@ -84,7 +89,7 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
   
   data <- data %>%
     select(one_of(c("key_id", colname_target))) %>%
-    mutate(key_id_x=key_id, key_id_y=key_id)
+    rename(class_col = !!sym(colname_target))
   
   # Feature preprocessing
   
@@ -100,13 +105,13 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
 # Preprocess numeric features  
   if(length(features_num_names)>0) {
     range_f <- (apply(features[,features_num_names], 2, max) - apply(features[,features_num_names], 2, min)) %>% 
-        data_frame(feature_colname=names(.), range=.)
+        data_frame(feature_colname=names(.), range_n=.)
     dist_num <- features %>%
       select(key_id, one_of(features_num_names)) %>% 
       gather(feature_colname, original_x, -key_id) %>%
       left_join(range_f, by="feature_colname") %>%
-      mutate(x=original_x/range) %>%
-      select(-range, -original_x)
+      mutate(x=original_x/range_n) %>%
+      select(-range_n, -original_x)
 
   } else {
     temp_name <- toString(sample(x = c(letters, LETTERS), 7, replace = T))
@@ -126,7 +131,7 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
   
   load_balance <- features %>%
     select(key_id) %>%
-    mutate(local_id=rep_len(c(1:use_n_cores), length.out = n())) %>%
+    mutate(local_id=rep_len(c(1:n_batches), length.out = n())) %>%
     split(., .$local_id)
   
   if(use_n_cores>1){
@@ -134,19 +139,18 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
     dist_cl <- parallel::makeCluster(use_n_cores)
     parallel::clusterExport(cl=dist_cl, envir = environment(), varlist = c("dist_num", "dist_cat", "load_balance"))
     parallel::clusterCall(cl = dist_cl, function() library(dplyr))
+    on.exit(stopCluster(dist_cl))
     
     list_dist_total_obs <- parLapplyLB(cl = dist_cl, 
-                                       X = 1:use_n_cores, 
+                                       X = 1:n_batches, 
                                        fun = .heom_cl_dist_matrix, 
                                        df_dist_num=dist_num, 
                                        df_dist_cat=dist_cat,
                                        list_load_balance=load_balance)
-    
-    stopCluster(dist_cl)
    
   } else {
     
-    list_dist_total_obs <- lapply(X = 1:use_n_cores,  
+    list_dist_total_obs <- lapply(X = 1:n_batches,  
                                   FUN = .heom_cl_dist_matrix, 
                                   df_dist_num=dist_num, 
                                   df_dist_cat=dist_cat,
@@ -156,8 +160,8 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
   
   dist_total_all <- list_dist_total_obs %>%
     bind_rows(.) %>% 
-    left_join(data %>% transmute(key_id_x=key_id, class_col_x=!!sym(colname_target)), by="key_id_x") %>%
-    left_join(data %>% transmute(key_id_y=key_id, class_col_y=!!sym(colname_target)), by="key_id_y") %>%
+    left_join(data %>% rename(key_id_x=key_id, class_col_x=class_col), by="key_id_x") %>%
+    left_join(data %>% rename(key_id_y=key_id, class_col_y=class_col), by="key_id_y") %>%
     arrange(key_id_x, key_id_y) %>%
     as.data.frame(., row_names=NULL) 
   
