@@ -6,3 +6,5 @@ testfr <- data.frame(class=c(rep("maj", 15), rep("min", 5)),
             cata=as.factor(ifelse(runif(20)>0.5, "a", "b")), 
             catb=as.character(ifelse(runif(20)>0.5, "d", "e")), 
             stringsAsFactors=FALSE)
+
+# print(commandArgs(trailingOnly = FALSE))
