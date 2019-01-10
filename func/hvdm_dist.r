@@ -49,7 +49,7 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
   }
   
   .hvdm_cl_dist_matrix <- function(df_dist_num, df_dist_cat, list_load_balance, X) {
-    load_balance_local <- load_balance[[X]] %>%
+    load_balance_local <- list_load_balance[[X]] %>%
       select(key_id)
 
     dist_num_obs <- df_dist_num %>% 
@@ -62,7 +62,7 @@ hvdm_dist <- function(data, colname_target, use_n_cores=1) {
 
     dist_cat_obs <- df_dist_cat %>% 
       right_join(load_balance_local, by="key_id") %>%
-      # if any of the features (a) has different class occurances (c), then expand to all observed classes
+      # if any of the features (a) has different class occurences (c), then expand to all observed classes
       # P_axc = (N_axc / N_ax) = (0 / N_ax) = 0
       full_join(df_dist_cat %>% rename(P_ayc=P_axc), by=c("feature_colname", "class_col_loop"), suffix=c("_x", "_y")) %>%
       mutate(P_axc=ifelse(is.na(P_axc), 0, P_axc)) %>%

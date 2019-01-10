@@ -48,7 +48,7 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
   }
   
   .heom_cl_dist_matrix <- function(df_dist_num, df_dist_cat, list_load_balance, X) {
-    load_balance_local <- load_balance[[X]] %>%
+    load_balance_local <- list_load_balance[[X]] %>%
       select(key_id)
 
     dist_num_obs <- df_dist_num %>% 
@@ -61,8 +61,6 @@ heom_dist <- function(data, colname_target, use_n_cores=1) {
 
     dist_cat_obs <- df_dist_cat %>% 
       right_join(load_balance_local, by="key_id") %>%
-      # if any of the features (a) has different class occurances (c), then expand to all observed classes
-      # P_axc = (N_axc / N_ax) = (0 / N_ax) = 0
       full_join(df_dist_cat, by=c("feature_colname"), suffix=c("_x", "_y")) %>%
       mutate(ndiff_a=ifelse(feature_level_x==feature_level_y, 0, 1)) %>%
       select(key_id_x, key_id_y, feature_colname, ndiff_a)
