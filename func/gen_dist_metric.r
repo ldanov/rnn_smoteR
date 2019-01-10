@@ -36,7 +36,8 @@
     df_dist_total_worker <- dist_num_obs %>%
       bind_rows(dist_cat_obs) %>%
       group_by(key_id_x, key_id_y) %>%
-      summarise(dist=sqrt(sum(ndiff_a^2)))
+      summarise(dist=sqrt(sum(ndiff_a^2))) %>%
+      ungroup() 
 
     return(df_dist_total_worker)
   }
@@ -55,19 +56,13 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
       dist_type="hvdm"
   }
 
-  if(is.null(batch_size)) {
-      batch_size <- use_n_cores
-  } else if(batch_size<use_n_cores) {
-      batch_size <- use_n_cores
-  }
-
   if (missing(colname_target)) {
-    stop("target column arg not specified")
+    stop("colname_target arg not specified")
   } else if (!is.character(colname_target) | length(colname_target)!=1) {
-    stop("target column arg must be a single string") 
-  }
-
-  if("class_col" %in% colnames(data) & colname_target!="class_col") {
+    stop("colname_target arg must be a single string") 
+  } else if (!colname_target %in% colnames(data)) {
+    stop("colname_target arg must be the name of a column in data") 
+  } else if("class_col" %in% colnames(data) & colname_target!="class_col") {
     stop("only colname_target can be named class_col")
   }
 
@@ -86,6 +81,13 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
   if(use_n_cores>1){
     require(parallel)
   }
+
+  if(is.null(batch_size)) {
+      batch_size <- use_n_cores
+  } else if(batch_size<use_n_cores) {
+    warning("batch_size smaller than assigned cores; batch_size overwritten to number of cores")
+      batch_size <- use_n_cores
+  }
   
   features <- as_data_frame(data) %>%
     rename(class_col = !!sym(colname_target)) %>%
@@ -94,7 +96,7 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
   
   data <- data %>%
     select(one_of(c("key_id", colname_target))) %>%
-    mutate(key_id_x=key_id, key_id_y=key_id)
+    rename(class_col = !!sym(colname_target))
   
   # Feature preprocessing
   
@@ -112,19 +114,19 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
       if (grepl(pattern="hvdm", x=dist_type, ignore.case=TRUE)) {
         range_f <- apply(features[,features_num_names], 2, sd) %>% 
             data_frame(feature_colname=names(.), sd=.) %>%
-            mutate(range=4*sd) %>%
+            mutate(range_n=4*sd) %>%
             select(-sd)
       } else if (grepl(pattern="heom", x=dist_type, ignore.case=TRUE)) {
         range_f <- (apply(features[,features_num_names], 2, max) - apply(features[,features_num_names], 2, min)) %>% 
-            data_frame(feature_colname=names(.), range=.)
+            data_frame(feature_colname=names(.), range_n=.)
       }  
     
     dist_num <- features %>%
       select(key_id, one_of(features_num_names)) %>% 
       gather(feature_colname, original_x, -key_id) %>%
       left_join(range_f, by="feature_colname") %>%
-      mutate(x=original_x/range) %>%
-      select(-range, -original_x)
+      mutate(x=original_x/range_n) %>%
+      select(-range_n, -original_x)
 
   } else {
     temp_name <- toString(sample(x = c(letters, LETTERS), 7, replace = T))
@@ -146,7 +148,8 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
             mutate(P_axc=N_axc/N_ax) %>%
             select(-N_axc, -N_ax) %>%
             rename(class_col_loop=class_col) %>%
-            right_join(feature_cat_enc %>% select(-class_col), by = c("feature_colname", "feature_level"))
+            right_join(feature_cat_enc %>% select(-class_col), by = c("feature_colname", "feature_level")) %>%
+            ungroup()
       } else if (grepl(pattern="heom", x=dist_type, ignore.case=TRUE)) {
           dist_cat <- features %>% 
             select(key_id, one_of(features_cat_names)) %>%
@@ -182,7 +185,7 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
    
   } else {
     
-    list_dist_total_obs <- lapply(X = 1,  
+    list_dist_total_obs <- lapply(X = 1:batch_size,  
                                   FUN = .cl_dist_matrix, 
                                   df_dist_num=dist_num, 
                                   df_dist_cat=dist_cat,
@@ -193,8 +196,8 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
   
   dist_total_all <- list_dist_total_obs %>%
     bind_rows(.) %>% 
-    left_join(data %>% transmute(key_id_x=key_id, class_col_x=!!sym(colname_target)), by="key_id_x") %>%
-    left_join(data %>% transmute(key_id_y=key_id, class_col_y=!!sym(colname_target)), by="key_id_y") %>%
+    left_join(data %>% rename(key_id_x=key_id, class_col_x=class_col), by="key_id_x") %>%
+    left_join(data %>% rename(key_id_y=key_id, class_col_y=class_col), by="key_id_y") %>%
     arrange(key_id_x, key_id_y) %>%
     as.data.frame(., row_names=NULL) 
   
