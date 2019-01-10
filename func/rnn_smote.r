@@ -13,19 +13,26 @@
 #################################
 
 rnn_smote_v1 <- function(data, colname_target, minority_label, 
-                  knn=3, multiply_min=1, use_n_cores=1, 
-                  handle_categorical=c("character"), 
+                  knn=3, multiply_min=1, use_n_cores=1, n_batches=NULL, 
+                  handle_categorical=c("character"), dist_type=c("hvdm", "heom"),
                   seed_use=NA, conservative=FALSE, b_shape1=1, b_shape2=3) {
   require(dplyr)
   # Currently does not handle any NAs
   if(anyNA(data)) {
     stop("data contains NA values")
   }
+
   if("data.table" %in% class(data)) {
     stop("data cannot be of class data.table. Convert to data.frame and try again.")
   }
 
-  if("class_col" %in% colnames(data) & colname_target!="class_col") {
+  if (missing(colname_target)) {
+    stop("colname_target arg not specified")
+  } else if (!is.character(colname_target) | length(colname_target)!=1) {
+    stop("colname_target arg must be a single string") 
+  } else if (!colname_target %in% colnames(data)) {
+    stop("colname_target arg must be the name of a column in data") 
+  } else if("class_col" %in% colnames(data) & colname_target!="class_col") {
     stop("only colname_target can be named class_col")
   }
 
@@ -33,6 +40,11 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
     if(k %in% colnames(data)) {
       stop(paste0("data cannot contain column named ", k))
     }
+  }
+
+  if(length(dist_type)!=1){
+      warning("more than one distance metric selected; using default hvmd")
+      dist_type="hvdm"
   }
     
   if(is.na(seed_use)) {
@@ -42,6 +54,13 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
 
   if(use_n_cores>1){
     require(parallel)
+  }
+
+  if(is.null(n_batches)) {
+      n_batches <- use_n_cores
+  } else if(n_batches<use_n_cores) {
+    warning("n_batches smaller than assigned cores; n_batches overwritten to number of cores")
+      n_batches <- use_n_cores
   }
 
   data_fr <- data %>%
@@ -54,7 +73,7 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
                              colname_target="class_col", 
                              use_n_cores=use_n_cores, 
                              n_batches=use_n_cores, 
-                             dist_type="hvdm") %>%
+                             dist_type=dist_type) %>%
     dplyr::filter(key_id_x!=key_id_y) %>%
     group_by(key_id_x) %>%
     top_n(n=-knn, wt=dist) %>%
@@ -63,7 +82,7 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
 
   lb_df <- dist_min %>%
     select(key_id) %>%
-    mutate(local_id=rep_len(c(1:use_n_cores), length.out = n())) %>%
+    mutate(local_id=rep_len(c(1:n_batches), length.out = n())) %>%
     left_join(dist_min, by="key_id") %>%
     split(., .$local_id)
 
@@ -87,12 +106,12 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
     smote_cl <- parallel::makeCluster(use_n_cores)
     parallel::clusterExport(cl = smote_cl, envir = environment(), 
         varlist = c("settings_supplier", "lb_df", "data_fr", ".fcnmv"))
-    parallel::clusterCall(cl = smote_cl, function() library(dplyr))
-    parallel::clusterCall(cl = smote_cl, function() library(tidyr))
+    parallel::clusterCall(cl = smote_cl, lapply, c("dplyr", "tidyr"), 
+                          function(x) library(x, character.only = TRUE))
     on.exit(stopCluster(smote_cl))
-    
+
     list_new_obs <- parLapplyLB(cl = smote_cl,
-                                X = 1:use_n_cores,
+                                X = 1:n_batches,
                                 fun = .rnn_smote_cl_fun,
                                 settings_supplier=settings_supplier,
                                 lb_df = lb_df,
@@ -100,7 +119,7 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
     
   } else {
     
-    list_new_obs <- lapply(X = 1:use_n_cores,
+    list_new_obs <- lapply(X = 1:n_batches,
                            FUN = .rnn_smote_cl_fun,
                            settings_supplier=settings_supplier,
                            lb_df = lb_df,
