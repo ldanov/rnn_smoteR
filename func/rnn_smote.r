@@ -51,8 +51,8 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
     mutate_if(is.factor, as.character) 
   
   dist_min <- heom_dist(data=data_fr %>%
-    filter(class_col==minority_label), colname_target="class_col", use_n_cores=use_n_cores) %>%
-    filter(key_id_x!=key_id_y) %>%
+    dplyr::filter(class_col==minority_label), colname_target="class_col", use_n_cores=use_n_cores) %>%
+    dplyr::filter(key_id_x!=key_id_y) %>%
     group_by(key_id_x) %>%
     top_n(n=-knn, wt=dist) %>%
     rename(neigh=key_id_y, key_id=key_id_x) %>%
@@ -125,13 +125,13 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
                         pull(key_id), 
                       data_fr %>% 
                         ungroup() %>%
-                        filter(class_col!=minority_label) %>% 
+                        dplyr::filter(class_col!=minority_label) %>% 
                         pull(key_id) 
   )
   
   df_num_all <- data_fr %>%
     select(key_id, class_col, one_of(numerical)) %>%
-    filter(key_id %in% distinct_keys)
+    dplyr::filter(key_id %in% distinct_keys)
   
   for (k in seq_along(numerical)) {
     
@@ -141,7 +141,7 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
     
     breaks_tmp <- c(-Inf, 
                     df_num_tmp %>%
-                      filter(class_col==minority_label) %>%
+                      dplyr::filter(class_col==minority_label) %>%
                       distinct(feat_value_num) %>%
                       arrange(feat_value_num) %>%
                       pull(feat_value_num),
@@ -152,27 +152,27 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
       mutate(feat_val_grps_right=cut(feat_value_num, breaks=breaks_tmp, include.lowest=FALSE, right=FALSE))
     
     df_num_new <- df_num_tmp %>%
-      filter(class_col==minority_label) %>%
+      dplyr::filter(class_col==minority_label) %>%
       left_join(df_num_tmp %>% 
-                  filter(class_col!=minority_label) %>% 
+                  dplyr::filter(class_col!=minority_label) %>% 
                   select(feat_val_grps_left, feat_value_num), 
                 by="feat_val_grps_left", 
                 suffix=c("", "_maj_left")
       ) %>%
       mutate(feat_value_num_maj_left=ifelse(is.na(feat_value_num_maj_left), -Inf, feat_value_num_maj_left)) %>%
       group_by(key_id) %>%
-      filter(feat_value_num_maj_left==max(feat_value_num_maj_left)) %>%
+      dplyr::filter(feat_value_num_maj_left==max(feat_value_num_maj_left)) %>%
       ungroup() %>%
       distinct(key_id, .keep_all=TRUE) %>%
       left_join(df_num_tmp %>% 
-                  filter(class_col!=minority_label) %>% 
+                  dplyr::filter(class_col!=minority_label) %>% 
                   select(feat_val_grps_right, feat_value_num), 
                 by="feat_val_grps_right", 
                 suffix=c("", "_maj_right")
       ) %>%
       mutate(feat_value_num_maj_right=ifelse(is.na(feat_value_num_maj_right), Inf, feat_value_num_maj_right)) %>%
       group_by(key_id) %>%
-      filter(feat_value_num_maj_right==min(feat_value_num_maj_right)) %>%
+      dplyr::filter(feat_value_num_maj_right==min(feat_value_num_maj_right)) %>%
       ungroup() %>%
       distinct(key_id, .keep_all=TRUE) %>%
       select(-starts_with("feat_val_grps")) %>%
