@@ -1,48 +1,22 @@
-.cl_dist_matrix <- function(df_dist_num, df_dist_cat, list_load_balance, type, X) {
-    require(dplyr)
-    load_balance_local <- list_load_balance[[X]] %>%
-      select(key_id)
+#################################
+## gen_dist_metric: generate distance metric 
+## Supports Heterogeneous Euclidean-Overlap Metric (heom) and 
+## Heterogeneous Value Difference Metric (hvdm); see
+## Wilson & Martinez (1997): Improved Heterogeneous Distance Functions, 
+## pp.5-6 (heom) or pp.8-9 (hvdm). The calculation of the latter
+## uses N2: normalized_ vdm2(x, y) for categorical features.
+## data - data frame containing class column, features and optional unique key_id.
+## Missing values not yet supported
+## colname_target - string with column name of class labels
+## use_n_cores - how many cores should be used in calculation (DEFAULT:1)
+## n_batches - in how many batches to split the observations (DEFAULT:1)
+## dist_type - which distance metric to use (DEFAULT:hvdm)
+## Returns a dataframe with key_id_x, key_id_y, class_col_x, class_col_y, dist (distance) 
+## for each combination of x and y from key_id. 
+## Lyubomir Danov, 2019
+#################################
 
-    # select only this worker's distances
-    dist_num_obs <- df_dist_num %>% 
-      right_join(load_balance_local, by="key_id") %>%
-      rename(key_id_x=key_id) %>%
-      left_join(df_dist_num %>% 
-                  rename(y=x, key_id_y=key_id), by="feature_colname") %>% 
-      mutate(ndiff_a=abs(x-y)) %>% 
-      select(key_id_x, key_id_y, feature_colname, ndiff_a) 
-
-    dist_cat_obs <- df_dist_cat %>% 
-      right_join(load_balance_local, by="key_id") 
-      
-    if(grepl(pattern="hvdm", x=type, ignore.case=TRUE)) {
-        dist_cat_obs <- dist_cat_obs %>%
-            # if any of the features (a) has different class occurences (c), then expand to all observed classes
-            # P_axc = (N_axc / N_ax) = (0 / N_ax) = 0
-            full_join(df_dist_cat %>% rename(P_ayc=P_axc), by=c("feature_colname", "class_col_loop"), suffix=c("_x", "_y")) %>%
-            mutate(P_axc=ifelse(is.na(P_axc), 0, P_axc)) %>%
-            mutate(P_ayc=ifelse(is.na(P_ayc), 0, P_ayc)) %>%
-            mutate(P_azc=(P_axc-P_ayc)^2) %>%
-            group_by(key_id_x, key_id_y, feature_colname) %>%
-            summarise(ndiff_a=sqrt(sum(P_azc))) %>%
-            ungroup() 
-    } else if (grepl(pattern="heom", x=type, ignore.case=TRUE)) {
-        dist_cat_obs <- dist_cat_obs %>% 
-            full_join(df_dist_cat, by=c("feature_colname"), suffix=c("_x", "_y")) %>%
-            mutate(ndiff_a=ifelse(feature_level_x==feature_level_y, 0, 1)) %>%
-            select(key_id_x, key_id_y, feature_colname, ndiff_a)
-    }
-
-    df_dist_total_worker <- dist_num_obs %>%
-      bind_rows(dist_cat_obs) %>%
-      group_by(key_id_x, key_id_y) %>%
-      summarise(dist=sqrt(sum(ndiff_a^2))) %>%
-      ungroup() 
-
-    return(df_dist_total_worker)
-  }
-  
-gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL, dist_type=c("hvdm", "heom")) {
+gen_dist_metric <- function(data, colname_target, use_n_cores=1, n_batches=NULL, dist_type=c("hvdm", "heom")) {
   require(dplyr)
   require(tidyr)
   require(tidyselect)
@@ -82,11 +56,11 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
     require(parallel)
   }
 
-  if(is.null(batch_size)) {
-      batch_size <- use_n_cores
-  } else if(batch_size<use_n_cores) {
-    warning("batch_size smaller than assigned cores; batch_size overwritten to number of cores")
-      batch_size <- use_n_cores
+  if(is.null(n_batches)) {
+      n_batches <- use_n_cores
+  } else if(n_batches<use_n_cores) {
+    warning("n_batches smaller than assigned cores; n_batches overwritten to number of cores")
+      n_batches <- use_n_cores
   }
   
   features <- as_data_frame(data) %>%
@@ -165,7 +139,7 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
   # the batch assignment is sorted for speed when filtering
   load_balance <- features %>%
     select(key_id) %>%
-    mutate(local_id=sort(rep_len(1:batch_size, length.out = n()))) %>%
+    mutate(local_id=sort(rep_len(1:n_batches, length.out = n()))) %>%
     split(., .$local_id)
   
   if(use_n_cores>1){
@@ -176,7 +150,7 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
     on.exit(stopCluster(dist_cl))
 
     list_dist_total_obs <- parLapplyLB(cl = dist_cl, 
-                                       X = 1:batch_size, 
+                                       X = 1:n_batches, 
                                        fun = .cl_dist_matrix, 
                                        df_dist_num=dist_num, 
                                        df_dist_cat=dist_cat,
@@ -185,7 +159,7 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
    
   } else {
     
-    list_dist_total_obs <- lapply(X = 1:batch_size,  
+    list_dist_total_obs <- lapply(X = 1:n_batches,  
                                   FUN = .cl_dist_matrix, 
                                   df_dist_num=dist_num, 
                                   df_dist_cat=dist_cat,
@@ -204,15 +178,59 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
   return(dist_total_all)
 }
 
+.cl_dist_matrix <- function(df_dist_num, df_dist_cat, list_load_balance, type, X) {
+    require(dplyr)
+    load_balance_local <- list_load_balance[[X]] %>%
+      select(key_id)
+
+    # select only this worker's distances
+    dist_num_obs <- df_dist_num %>% 
+      right_join(load_balance_local, by="key_id") %>%
+      rename(key_id_x=key_id) %>%
+      left_join(df_dist_num %>% 
+                  rename(y=x, key_id_y=key_id), by="feature_colname") %>% 
+      mutate(ndiff_a=abs(x-y)) %>% 
+      select(key_id_x, key_id_y, feature_colname, ndiff_a) 
+
+    dist_cat_obs <- df_dist_cat %>% 
+      right_join(load_balance_local, by="key_id") 
+      
+    if(grepl(pattern="hvdm", x=type, ignore.case=TRUE)) {
+        dist_cat_obs <- dist_cat_obs %>%
+            # if any of the features (a) has different class occurences (c), then expand to all observed classes
+            # P_axc = (N_axc / N_ax) = (0 / N_ax) = 0
+            full_join(df_dist_cat %>% rename(P_ayc=P_axc), by=c("feature_colname", "class_col_loop"), suffix=c("_x", "_y")) %>%
+            mutate(P_axc=ifelse(is.na(P_axc), 0, P_axc)) %>%
+            mutate(P_ayc=ifelse(is.na(P_ayc), 0, P_ayc)) %>%
+            mutate(P_azc=(P_axc-P_ayc)^2) %>%
+            group_by(key_id_x, key_id_y, feature_colname) %>%
+            summarise(ndiff_a=sqrt(sum(P_azc))) %>%
+            ungroup() 
+    } else if (grepl(pattern="heom", x=type, ignore.case=TRUE)) {
+        dist_cat_obs <- dist_cat_obs %>% 
+            full_join(df_dist_cat, by=c("feature_colname"), suffix=c("_x", "_y")) %>%
+            mutate(ndiff_a=ifelse(feature_level_x==feature_level_y, 0, 1)) %>%
+            select(key_id_x, key_id_y, feature_colname, ndiff_a)
+    }
+
+    df_dist_total_worker <- dist_num_obs %>%
+      bind_rows(dist_cat_obs) %>%
+      group_by(key_id_x, key_id_y) %>%
+      summarise(dist=sqrt(sum(ndiff_a^2))) %>%
+      ungroup() 
+
+    return(df_dist_total_worker)
+  }
+
 # set.seed(1)
 # testfr <- data.frame(class=c(rep("maj", 15), rep("min", 5)), 
 #             numa=rnorm(20), numb=runif(20), numc=rf(20, 3, 1),  
 #             cata=as.factor(ifelse(runif(20)>0.5, "a", "b")), 
 #             catb=as.character(ifelse(runif(20)>0.5, "d", "e")), 
 #             stringsAsFactors=FALSE)
-# res1 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=1, batch_size=NULL, dist_type=c("hvdm"))
-# res2 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, batch_size=NULL, dist_type=c("heom"))
-# res3 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, batch_size=8, dist_type=c("hvdm"))
-# res4 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, batch_size=8, dist_type=c("heom"))
+# res1 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=1, n_batches=NULL, dist_type=c("hvdm"))
+# res2 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=NULL, dist_type=c("heom"))
+# res3 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=8, dist_type=c("hvdm"))
+# res4 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=8, dist_type=c("heom"))
 # identical(res1, res3)
 # identical(res2, res4)

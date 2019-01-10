@@ -6,13 +6,14 @@
 ## Missing values not yet supported
 ## colname_target - string with column name of class labels
 ## use_n_cores - should synth obs generation be parallelized; on how many cores (DEFAULT:1)
+## n_batches - in how many batches to split the observations (DEFAULT:1)
 ## Returns a dataframe with key_id_x, key_id_y, class_col_x, class_col_y, dist (distance) 
 ## for each combination of x and y from key_id
 ## Lyubomir Danov, 2018
 #################################
 
 ### TODO: consider integration with hvdm into single function
-heom_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
+heom_dist <- function(data, colname_target, use_n_cores=1, n_batches=NULL) {
   require(dplyr)
   require(tidyr)
   require(tidyselect)
@@ -47,11 +48,11 @@ heom_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
     require(parallel)
   }
 
-  if(is.null(batch_size)) {
-      batch_size <- use_n_cores
-  } else if(batch_size<use_n_cores) {
-    warning("batch_size smaller than assigned cores; batch_size overwritten to number of cores")
-      batch_size <- use_n_cores
+  if(is.null(n_batches)) {
+      n_batches <- use_n_cores
+  } else if(n_batches<use_n_cores) {
+    warning("n_batches smaller than assigned cores; n_batches overwritten to number of cores")
+      n_batches <- use_n_cores
   }
   
   .heom_cl_dist_matrix <- function(df_dist_num, df_dist_cat, list_load_balance, X) {
@@ -130,7 +131,7 @@ heom_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
   
   load_balance <- features %>%
     select(key_id) %>%
-    mutate(local_id=rep_len(c(1:batch_size), length.out = n())) %>%
+    mutate(local_id=rep_len(c(1:n_batches), length.out = n())) %>%
     split(., .$local_id)
   
   if(use_n_cores>1){
@@ -141,7 +142,7 @@ heom_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
     on.exit(stopCluster(dist_cl))
     
     list_dist_total_obs <- parLapplyLB(cl = dist_cl, 
-                                       X = 1:batch_size, 
+                                       X = 1:n_batches, 
                                        fun = .heom_cl_dist_matrix, 
                                        df_dist_num=dist_num, 
                                        df_dist_cat=dist_cat,
@@ -149,7 +150,7 @@ heom_dist <- function(data, colname_target, use_n_cores=1, batch_size=NULL) {
    
   } else {
     
-    list_dist_total_obs <- lapply(X = 1:batch_size,  
+    list_dist_total_obs <- lapply(X = 1:n_batches,  
                                   FUN = .heom_cl_dist_matrix, 
                                   df_dist_num=dist_num, 
                                   df_dist_cat=dist_cat,
