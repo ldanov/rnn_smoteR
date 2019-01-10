@@ -45,76 +45,19 @@ smote <- function(data, colname_target, minority_label,
     require(parallel)
   }
   
-  .smote_cl_fun <- function(X, settings_supplier, lb_df, data_fr) {
-    lb_df_local <- lb_df[[X]] 
-    list2env(settings_supplier, envir = environment())
-    df_cat_orig <- lb_df_local %>%
-        distinct(key_id) %>%
-        left_join(data_fr, by="key_id") %>%
-        select(key_id, one_of(categorical)) %>%
-        gather(feat_name, feat_value_cat, -key_id)
-
-    df_num_orig <- lb_df_local %>%
-        distinct(key_id) %>%
-        left_join(data_fr, by="key_id") %>%
-        select(key_id, one_of(numerical)) %>%
-        gather(feat_name, feat_value_num, -key_id)
-
-    for (mult in seq_len(multiply_min)) {
-        set.seed(mult*seed)
-        lb_df_local_tmp <- lb_df_local %>%
-            group_by(key_id) %>%
-            sample_n(1) %>%
-            ungroup()
-
-        df_cat_new <- lb_df_local_tmp %>%
-            left_join(data_fr %>% rename(neigh=key_id), by=c("neigh")) %>%
-            select(key_id, one_of(categorical)) %>%
-            gather(feat_name, feat_value_cat, -key_id) %>%
-            full_join(df_cat_orig, 
-                by=c("key_id", "feat_name"), 
-                suffix=c("_n", "_o")) %>%
-            mutate(gap=runif(n=n())) %>%
-            mutate(feat_value_cat_synth=ifelse(gap>0.5, feat_value_cat_n, feat_value_cat_o)) %>%
-            select(key_id, feat_name, feat_value_cat_synth) %>%
-            spread(feat_name, feat_value_cat_synth)
-
-        df_num_new <- lb_df_local_tmp %>%
-            left_join(data_fr %>% rename(neigh=key_id), by=c("neigh")) %>%
-            select(key_id, one_of(numerical)) %>%
-            gather(feat_name, feat_value_num, -key_id) %>%
-            full_join(df_num_orig, 
-                by=c("key_id", "feat_name"), 
-                suffix=c("_n", "_o")) %>%
-            mutate(gap=runif(n())) %>%
-            mutate(diff=feat_value_num_n - feat_value_num_o) %>%
-            mutate(feat_value_num_synth=feat_value_num_o + (gap*diff)) %>%
-            select(key_id, feat_name, feat_value_num_synth) %>%
-            spread(feat_name, feat_value_num_synth)
-
-        df_new_tmp <- df_cat_new %>%
-            full_join(df_num_new, by="key_id")
-
-        if (mult==1) {
-            new_obs <- df_new_tmp
-        } else {
-            new_obs <- bind_rows(new_obs, df_new_tmp)
-        }
-
-    }
-
-    return(new_obs)    
-  }  
-
   data_fr <- data %>%
     mutate(key_id=row_number()) %>%
     rename(class_col = !!sym(colname_target)) %>%
     select(key_id, class_col, everything()) %>%
     mutate_if(is.factor, as.character) %>%
-    filter(class_col==minority_label)
+    dplyr::filter(class_col==minority_label)
   
-  dist_min <- heom_dist(data=data_fr, colname_target="class_col", use_n_cores=use_n_cores) %>%
-    filter(key_id_x!=key_id_y) %>%
+  dist_min <- comp_dist_metric(dplyr::filter(data_fr, class_col==minority_label), 
+                             colname_target="class_col", 
+                             use_n_cores=use_n_cores, 
+                             n_batches=use_n_cores, 
+                             dist_type="hvdm") %>%
+    dplyr::filter(key_id_x!=key_id_y) %>%
     group_by(key_id_x) %>%
     top_n(n=-knn, wt=dist) %>%
     rename(neigh=key_id_y, key_id=key_id_x) %>%
@@ -170,5 +113,67 @@ smote <- function(data, colname_target, minority_label,
 
   return(df_new)
   # return(list(settings_supplier, data_fr, lb_df))
+}
+
+
+.smote_cl_fun <- function(X, settings_supplier, lb_df, data_fr) {
+  lb_df_local <- lb_df[[X]] 
+  list2env(settings_supplier, envir = environment())
+  df_cat_orig <- lb_df_local %>%
+    distinct(key_id) %>%
+    left_join(data_fr, by="key_id") %>%
+    select(key_id, one_of(categorical)) %>%
+    gather(feat_name, feat_value_cat, -key_id)
+  
+  df_num_orig <- lb_df_local %>%
+    distinct(key_id) %>%
+    left_join(data_fr, by="key_id") %>%
+    select(key_id, one_of(numerical)) %>%
+    gather(feat_name, feat_value_num, -key_id)
+  
+  for (mult in seq_len(multiply_min)) {
+    set.seed(as.integer(mult+seed))
+    lb_df_local_tmp <- lb_df_local %>%
+      group_by(key_id) %>%
+      sample_n(1) %>%
+      ungroup()
+    
+    df_cat_new <- lb_df_local_tmp %>%
+      left_join(data_fr %>% rename(neigh=key_id), by=c("neigh")) %>%
+      select(key_id, one_of(categorical)) %>%
+      gather(feat_name, feat_value_cat, -key_id) %>%
+      full_join(df_cat_orig, 
+                by=c("key_id", "feat_name"), 
+                suffix=c("_n", "_o")) %>%
+      mutate(gap=runif(n=n())) %>%
+      mutate(feat_value_cat_synth=ifelse(gap>0.5, feat_value_cat_n, feat_value_cat_o)) %>%
+      select(key_id, feat_name, feat_value_cat_synth) %>%
+      spread(feat_name, feat_value_cat_synth)
+    
+    df_num_new <- lb_df_local_tmp %>%
+      left_join(data_fr %>% rename(neigh=key_id), by=c("neigh")) %>%
+      select(key_id, one_of(numerical)) %>%
+      gather(feat_name, feat_value_num, -key_id) %>%
+      full_join(df_num_orig, 
+                by=c("key_id", "feat_name"), 
+                suffix=c("_n", "_o")) %>%
+      mutate(gap=runif(n())) %>%
+      mutate(diff=feat_value_num_n - feat_value_num_o) %>%
+      mutate(feat_value_num_synth=feat_value_num_o + (gap*diff)) %>%
+      select(key_id, feat_name, feat_value_num_synth) %>%
+      spread(feat_name, feat_value_num_synth)
+    
+    df_new_tmp <- df_cat_new %>%
+      full_join(df_num_new, by="key_id")
+    
+    if (mult==1) {
+      new_obs <- df_new_tmp
+    } else {
+      new_obs <- bind_rows(new_obs, df_new_tmp)
+    }
+    
+  }
+  
+  return(new_obs)    
 }
 #END
