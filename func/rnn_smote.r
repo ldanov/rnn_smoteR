@@ -50,13 +50,16 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
     select(key_id, class_col, everything()) %>%
     mutate_if(is.factor, as.character) 
   
-  dist_min <- heom_dist(data=data_fr %>%
-    dplyr::filter(class_col==minority_label), colname_target="class_col", use_n_cores=use_n_cores) %>%
-    dplyr::filter(key_id_x!=key_id_y) %>%
-    group_by(key_id_x) %>%
-    top_n(n=-knn, wt=dist) %>%
-    rename(neigh=key_id_y, key_id=key_id_x) %>%
-    select(key_id, neigh)
+  dist_min <- comp_dist_metric(dplyr::filter(data_fr, class_col==minority_label), 
+                             colname_target="class_col", 
+                             use_n_cores=use_n_cores, 
+                             n_batches=use_n_cores, 
+                             dist_type=c("hvdm")) %>%
+  dplyr::filter(key_id_x!=key_id_y) %>%
+  group_by(key_id_x) %>%
+  top_n(n=-knn, wt=dist) %>%
+  rename(neigh=key_id_y, key_id=key_id_x) %>%
+  select(key_id, neigh)
 
   lb_df <- dist_min %>%
     select(key_id) %>%
