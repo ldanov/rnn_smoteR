@@ -203,3 +203,16 @@ gen_dist_metric <- function(data, colname_target, use_n_cores=1, batch_size=NULL
   
   return(dist_total_all)
 }
+
+# set.seed(1)
+# testfr <- data.frame(class=c(rep("maj", 15), rep("min", 5)), 
+#             numa=rnorm(20), numb=runif(20), numc=rf(20, 3, 1),  
+#             cata=as.factor(ifelse(runif(20)>0.5, "a", "b")), 
+#             catb=as.character(ifelse(runif(20)>0.5, "d", "e")), 
+#             stringsAsFactors=FALSE)
+# res1 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=1, batch_size=NULL, dist_type=c("hvdm"))
+# res2 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, batch_size=NULL, dist_type=c("heom"))
+# res3 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, batch_size=8, dist_type=c("hvdm"))
+# res4 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, batch_size=8, dist_type=c("heom"))
+# identical(res1, res3)
+# identical(res2, res4)
