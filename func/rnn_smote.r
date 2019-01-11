@@ -56,9 +56,16 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
     require(parallel)
   }
 
+  n_min <- sum(data[,colname_target]==minority_label)
   if(is.null(n_batches)) {
-      n_batches <- use_n_cores
-  } else if(n_batches<use_n_cores) {
+      n_batches <- n_min
+  } 
+  
+  if (use_n_cores>n_min) {
+      warning("use_n_cores larger than number of minority observations, currently not supported. 
+                Overwritting use_n_cores and n_batches with n_minority for smote calculation.")
+      use_n_cores <- n_min
+  } else if(use_n_cores>n_batches) {
     warning("n_batches smaller than assigned cores; n_batches overwritten to number of cores")
       n_batches <- use_n_cores
   }
@@ -78,19 +85,19 @@ rnn_smote_v1 <- function(data, colname_target, minority_label,
     group_by(key_id_x) %>%
     top_n(n=-knn, wt=dist) %>%
     rename(neigh=key_id_y, key_id=key_id_x) %>%
-    select(key_id, neigh)
+    select(key_id, neigh) %>%
+    ungroup()
 
   lb_df <- dist_min %>%
-    select(key_id) %>%
-    mutate(local_id=rep_len(c(1:n_batches), length.out = n())) %>%
+    distinct(key_id) %>%
+    mutate(local_id=sort(rep_len(c(1:n_batches), length.out = n()))) %>%
     left_join(dist_min, by="key_id") %>%
     split(., .$local_id)
 
   col_classes <- sapply(data_fr, class)
-  categorical_cols <- col_classes[col_classes=="character" & 
-                        (!names(col_classes) %in% c("class_col", "key_id"))]
-  numerical_cols <- col_classes[col_classes!="character" & 
-                        (!names(col_classes) %in% c("class_col", "key_id"))]
+  col_classes[names(col_classes) %in% c("class_col", "key_id")] <- NA
+  categorical_cols <- col_classes[col_classes=="character" & !is.na(col_classes)]
+  numerical_cols <- col_classes[col_classes!="character" & !is.na(col_classes)]
   
   settings_supplier <- list(multiply_min=multiply_min,
                             seed=seed_use,
