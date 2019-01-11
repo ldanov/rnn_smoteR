@@ -5,6 +5,7 @@
 ## minority_label - label of the minority class for which synth obs are generated
 ## multiply_min - how many synthetic observations to generate for each existing minority obs
 ## use_n_cores - should synth obs generation be parallelized; on how many cores (DEFAULT:1)
+## n_batches - in how many batches to split the observations (DEFAULT: number of minority obs)
 ## handle_categorical - how should factor or character columns be returned. Currently only returns character columns.
 ## k - number of nearest neighbours to evaluate on (odd number recommended)
 ## Chawla et al. (2002)
@@ -59,6 +60,7 @@ smote <- function(data, colname_target, minority_label,
   
   n_min <- sum(data[,colname_target]==minority_label)
   if(is.null(n_batches)) {
+      warning("n_batches missing. assigning default value of n minorities")
       n_batches <- n_min
   } 
   
@@ -69,6 +71,9 @@ smote <- function(data, colname_target, minority_label,
   } else if(use_n_cores>n_batches) {
     warning("n_batches smaller than assigned cores; n_batches overwritten to number of cores")
       n_batches <- use_n_cores
+  } else if(n_batches>n_min) {
+      warning("n_batches bigger than number of minorities; n_batches overwritten to number of minorities")
+      n_batches <- n_min
   }
   
   data_fr <- data %>%
@@ -98,8 +103,18 @@ smote <- function(data, colname_target, minority_label,
   col_classes <- sapply(data_fr, class)
   col_classes[names(col_classes) %in% c("class_col", "key_id")] <- NA
   categorical_cols <- col_classes[col_classes=="character" & !is.na(col_classes)]
+  if(length(categorical_cols)==0) {
+    data_fr <- data_fr %>%
+      mutate(my_c_col_temp="a")
+    categorical_cols <- c("my_c_col_temp"="character")
+  }
   numerical_cols <- col_classes[col_classes!="character" & !is.na(col_classes)]
-  
+  if(length(numerical_cols)==0) {
+    data_fr <- data_fr %>%
+      mutate(my_n_col_temp=1)
+    numerical_cols <- c("my_n_col_temp"="integer")
+  }
+
   settings_supplier <- list(multiply_min=multiply_min,
                             seed=seed_use,
                             categorical=names(categorical_cols),
@@ -133,6 +148,7 @@ smote <- function(data, colname_target, minority_label,
   
   df_new <- list_new_obs %>% 
     bind_rows(.) %>%
+    select(one_of(names(col_classes))) %>%
     mutate(!!sym(colname_target):=minority_label)  %>%
     as.data.frame(., row_names=NULL) 
 
