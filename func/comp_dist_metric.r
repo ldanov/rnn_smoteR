@@ -228,9 +228,9 @@ comp_dist_metric <- function(data, colname_target, use_n_cores=1, n_batches=NULL
 #             cata=as.factor(ifelse(runif(20)>0.5, "a", "b")), 
 #             catb=as.character(ifelse(runif(20)>0.5, "d", "e")), 
 #             stringsAsFactors=FALSE)
-# res1 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=1, n_batches=NULL, dist_type=c("hvdm"))
-# res2 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=NULL, dist_type=c("heom"))
-# res3 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=8, dist_type=c("hvdm"))
-# res4 <- gen_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=8, dist_type=c("heom"))
+# res1 <- comp_dist_metric(data=testfr, colname_target="class", use_n_cores=1, n_batches=NULL, dist_type=c("hvdm"))
+# res2 <- comp_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=NULL, dist_type=c("heom"))
+# res3 <- comp_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=8, dist_type=c("hvdm"))
+# res4 <- comp_dist_metric(data=testfr, colname_target="class", use_n_cores=2, n_batches=8, dist_type=c("heom"))
 # identical(res1, res3)
 # identical(res2, res4)
